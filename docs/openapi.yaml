@@ -1,0 +1,2263 @@
+# Publiczny kontrakt API aplikacji.
+openapi: 3.1.0
+info:
+  title: Dziennik Jedzenia API
+  version: 1.1.0
+  description: "Kontrakt API: prywatny dziennik, statystyki dziennych kcal
+    i pomiarów wagi. Jeden właściciel, Europe/Warsaw, sesja cookies, Supabase RLS.
+    Backup i odzyskiwanie konta to operacje operatora, poza API. Wydanie wymaga migracji
+    24–26; wdrożenie wymaga osobnej konfiguracji operatora."
+  license:
+    name: Private project; license not specified
+servers:
+  - url: /api/v1
+    description: Ten sam HTTPS origin co SPA (lokalny/prod), bez wymyślonego hosta produkcyjnego.
+security:
+  - accessCookie: []
+tags:
+  - name: auth
+    description: Prywatne konto i sesja BFF
+  - name: products
+    description: Baza produktów
+  - name: templates
+    description: Zestawy składników
+  - name: diary
+    description: Posiłki i historia
+  - name: goals
+    description: Wersjonowane cele
+  - name: labels
+    description: Odczyt etykiety do korekty
+  - name: pwa
+    description: Publiczna instalacja PWA
+  - name: statistics
+    description: Statystyki kalorii i wagi
+paths:
+  /session:
+    post:
+      operationId: createSession
+      tags:
+        - auth
+      summary: Zaloguj przygotowanego właściciela
+      description: Zaloguj przygotowanego właściciela
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: &id001
+              schema:
+                type: string
+                const: no-store
+              description: Brak cache prywatnych danych.
+            X-Request-ID: &id002
+              schema: &id004
+                type: string
+                format: uuid
+              description: Identyfikator techniczny bez treści prywatnej.
+            Set-Cookie: &id003
+              schema:
+                type: string
+              description: "Dwa osobne nagłówki Set-Cookie: __Host-dd-access i __Host-dd-refresh;
+                Secure, HttpOnly, SameSite=Strict, Path=/, bez Domain."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/Csrf"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Login"
+      security: []
+    get:
+      operationId: getSession
+      tags:
+        - auth
+      summary: Sprawdź sesję i właściciela
+      description: Sprawdź sesję i właściciela
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+    delete:
+      operationId: deleteSession
+      tags:
+        - auth
+      summary: Wyloguj bieżące urządzenie
+      description: Idempotentne usunięcie cookies również gdy access wygasł lub cookies
+        nie ma. Odwołanie bieżącej sesji u dostawcy jeśli dostępna. Przy awarii Auth
+        nadal czyści cookies; UI usuwa dane. Offline patrz security.md.
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "204":
+          description: Operacja zakończona bez treści; cookies sesji usunięte.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+            Set-Cookie:
+              schema:
+                type: string
+              description: Wygaszenie obu cookies z Max-Age=0 i identyczną ścieżką;
+                osobny nagłówek dla każdego cookie.
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/Csrf"
+      security: []
+  /session/refresh:
+    post:
+      operationId: refreshSession
+      tags:
+        - auth
+      summary: Odśwież sesję przez BFF
+      description: Jedyny punkt rotacji poza loginem. Klient serializuje wywołania
+        między kartami; bez tokenów w JSON.
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+            Set-Cookie: *id003
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/Csrf"
+      security:
+        - refreshCookie: []
+  /products:
+    get:
+      operationId: listProducts
+      tags:
+        - products
+      summary: Wyszukaj własne produkty
+      description: Wyszukaj własne produkty
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductList"
+      parameters:
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/ArchiveFilter"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+    post:
+      operationId: createProduct
+      tags:
+        - products
+      summary: Utwórz zatwierdzony produkt
+      description: Utwórz zatwierdzony produkt
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationAck"
+        "201":
+          description: Utworzono; pierwszy commit nowego zasobu. Ponowienie tej samej
+            operacji zwraca 200.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationAck"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/Csrf"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductCreate"
+  /products/{product_id}:
+    get:
+      operationId: getProduct
+      tags:
+        - products
+      summary: Odczytaj własny produkt, także archiwalny
+      description: Odczytaj własny produkt, także archiwalny
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+            ETag:
+              schema:
+                type: string
+                pattern: ^"[1-9][0-9]*"$
+              description: Rewizja zasobu dla If-Match. Odczyt no-store; ETag nie
+                włącza cache.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateProduct
+      tags:
+        - products
+      summary: Zmień nazwę i wartości bez zmiany jednostki
+      description: Zmień nazwę i wartości bez zmiany jednostki
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationAck"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "404":
+          $ref: "#/components/responses/NotFound"
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/Csrf"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductUpdate"
+    delete:
+      operationId: archiveProduct
+      tags:
+        - products
+      summary: Archiwizuj produkt bez kasowania historii
+      description: Archiwizuj produkt bez kasowania historii
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationAck"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "404":
+          $ref: "#/components/responses/NotFound"
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/Csrf"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+    parameters:
+      - name: product_id
+        in: path
+        required: true
+        schema: *id004
+  /meal-templates:
+    get:
+      operationId: listTemplates
+      tags:
+        - templates
+      summary: Wyszukaj zapisane zestawy
+      description: Wyszukaj zapisane zestawy
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplateList"
+      parameters:
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/ArchiveFilter"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+    post:
+      operationId: createTemplate
+      tags:
+        - templates
+      summary: Zapisz zestaw ze składnikami
+      description: Zapisz zestaw ze składnikami
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationAck"
+        "201":
+          description: Utworzono; pierwszy commit nowego zasobu. Ponowienie tej samej
+            operacji zwraca 200.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationAck"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/Csrf"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TemplateCreate"
+  /meal-templates/{template_id}:
+    get:
+      operationId: getTemplate
+      tags:
+        - templates
+      summary: Odczytaj zestaw i aktualne produkty
+      description: Odczytaj zestaw i aktualne produkty
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+            ETag:
+              schema:
+                type: string
+                pattern: ^"[1-9][0-9]*"$
+              description: Rewizja zasobu dla If-Match. Odczyt no-store; ETag nie
+                włącza cache.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MealTemplate"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateTemplate
+      tags:
+        - templates
+      summary: Atomowo zmień zestaw i składniki
+      description: Atomowo zmień zestaw i składniki
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationAck"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "404":
+          $ref: "#/components/responses/NotFound"
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/Csrf"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TemplateUpdate"
+    delete:
+      operationId: archiveTemplate
+      tags:
+        - templates
+      summary: Archiwizuj zestaw
+      description: Archiwizuj zestaw
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationAck"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "404":
+          $ref: "#/components/responses/NotFound"
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/Csrf"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+    parameters:
+      - name: template_id
+        in: path
+        required: true
+        schema: *id004
+  /diary-meals:
+    post:
+      operationId: createMeal
+      tags:
+        - diary
+      summary: Dodaj posiłek ze snapshotami z bazy
+      description: Dodaj posiłek ze snapshotami z bazy
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationAck"
+        "201":
+          description: Utworzono; pierwszy commit nowego zasobu. Ponowienie tej samej
+            operacji zwraca 200.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationAck"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/Csrf"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MealCreate"
+  /diary-meals/{meal_id}:
+    get:
+      operationId: getMeal
+      tags:
+        - diary
+      summary: Odczytaj nieusunięty posiłek i jego snapshoty
+      description: Odczytaj nieusunięty posiłek i jego snapshoty
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+            ETag:
+              schema:
+                type: string
+                pattern: ^"[1-9][0-9]*"$
+              description: Rewizja zasobu dla If-Match. Odczyt no-store; ETag nie
+                włącza cache.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiaryMeal"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateMeal
+      tags:
+        - diary
+      summary: Edytuj ilości lub świadomie zastąp składnik
+      description: Edytuj ilości lub świadomie zastąp składnik
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationAck"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "404":
+          $ref: "#/components/responses/NotFound"
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/Csrf"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MealUpdate"
+    delete:
+      operationId: deleteMeal
+      tags:
+        - diary
+      summary: Usuń posiłek przez tombstone
+      description: Usuń posiłek przez tombstone
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationAck"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "404":
+          $ref: "#/components/responses/NotFound"
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/Csrf"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+    parameters:
+      - name: meal_id
+        in: path
+        required: true
+        schema: *id004
+  /days/{date}:
+    get:
+      operationId: getDay
+      tags:
+        - diary
+      summary: Pobierz spójny bilans wybranego dnia
+      description: Data <= dzisiaj Europe/Warsaw. Dzień bez wpisów zwraca 200 z zerami,
+        nie 404. Dzień przed pierwszym celem ma null goals/remaining/percentages.
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Day"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+    parameters:
+      - name: date
+        in: path
+        required: true
+        schema: &id005
+          type: string
+          format: date
+  /goals:
+    get:
+      operationId: getGoals
+      tags:
+        - goals
+      summary: Pobierz cel dla dnia i rewizję dzisiejszej wersji
+      description: Pobierz cel dla dnia i rewizję dzisiejszej wersji
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GoalView"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+      parameters:
+        - name: date
+          in: query
+          schema: *id005
+          description: Domyślnie dzisiaj Europe/Warsaw; przyszła/nieistniejąca data
+            odrzucona.
+  /goals/today:
+    put:
+      operationId: saveTodayGoals
+      tags:
+        - goals
+      summary: Ustaw cztery cele wyłącznie od dzisiaj
+      description: Ustaw cztery cele wyłącznie od dzisiaj
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationAck"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/Csrf"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/GoalIfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GoalsWrite"
+  /label-readings:
+    post:
+      operationId: readLabel
+      tags:
+        - labels
+      summary: Zaproponuj dane etykiety bez zapisu produktu
+      description: Jedna próba, tylko etykieta. JPEG/PNG/WebP <=10 MiB; MIME+sygnatura
+        sprawdzane serwerowo. UI timer <=30 s obejmuje upload; serwer deadline 25
+        s. Brak archiwum, brak automatycznego retry, brak płatnego fallbacku. Model
+        wymaga próby opisanej w ADR-006.
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: Sukces; przy mutacji odpowiedź po zatwierdzeniu transakcji.
+          headers:
+            Cache-Control: *id001
+            X-Request-ID: *id002
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabelProposal"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/Csrf"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - image
+              properties:
+                image:
+                  type: string
+                  format: binary
+                  description: Jeden obraz JPEG/PNG/WebP; maksymalnie 10485760 bajtów
+                    po przygotowaniu; HEIC wymaga JPEG.
+            encoding:
+              image:
+                contentType: image/jpeg, image/png, image/webp
+  /manifest.webmanifest:
+    servers:
+      - url: /
+        description: Publiczny origin aplikacji, poza /api/v1.
+    get:
+      operationId: getPwaManifest
+      summary: Pobierz publiczny manifest instalacji PWA
+      description: Plik statyczny; nie zawiera danych prywatnych. Rzeczywista instalacja
+        wymaga testu na iPhonie.
+      tags:
+        - pwa
+      security: []
+      responses:
+        "200":
+          description: Manifest Web App.
+          content:
+            application/manifest+json:
+              schema:
+                $ref: "#/components/schemas/PwaManifest"
+  /statistics:
+    get:
+      operationId: getStatistics
+      tags:
+        - statistics
+      summary: D007 dzienne kcal i pomiary wagi
+      description: Daty włącznie, 1900-01-01 do dziś Europe/Warsaw, from <= to, maksymalnie
+        366 dni na żądanie. UI dzieli dłuższe zakresy. Patrz statistics-contract.md.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+            pattern: ^\d{4}-\d{2}-\d{2}$
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+            pattern: ^\d{4}-\d{2}-\d{2}$
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "200":
+          description: "D007: kompletny odczyt lub potwierdzenie zatwierdzonej mutacji."
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            X-Request-ID:
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Statistics"
+  /weight-entries/{date}:
+    parameters:
+      - name: date
+        in: path
+        required: true
+        schema:
+          type: string
+          format: date
+          pattern: ^\d{4}-\d{2}-\d{2}$
+    put:
+      operationId: saveWeightEntry
+      tags:
+        - statistics
+      summary: D007 zapisz wagę dnia
+      description: Daty 1900-01-01..dziś. If-Match jest bieżącą weight_revision. PUT
+        przywraca tombstone świadomie; DELETE nieistniejącego/usuniętego z nowym kluczem
+        =404. Replay =200, bez ponownej mutacji.
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/Csrf"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/WeightIfMatch"
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "200":
+          description: "D007: kompletny odczyt lub potwierdzenie zatwierdzonej mutacji."
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            X-Request-ID:
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeightMutation"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WeightWrite"
+    delete:
+      operationId: deleteWeightEntry
+      tags:
+        - statistics
+      summary: D007 usuń pomiar dnia
+      description: Daty 1900-01-01..dziś. If-Match jest bieżącą weight_revision. PUT
+        przywraca tombstone świadomie; DELETE nieistniejącego/usuniętego z nowym kluczem
+        =404. Replay =200, bez ponownej mutacji.
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/Csrf"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/WeightIfMatch"
+      responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "200":
+          description: "D007: kompletny odczyt lub potwierdzenie zatwierdzonej mutacji."
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            X-Request-ID:
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeightMutation"
+components:
+  securitySchemes:
+    accessCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-dd-access
+      description: JWT Supabase; Secure, HttpOnly, SameSite=Strict, Path=/.
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-dd-refresh
+      description: Rotowany refresh token; tylko BFF.
+  parameters:
+    Csrf:
+      name: X-Requested-With
+      in: header
+      required: true
+      schema:
+        type: string
+        const: DziennikJedzenia
+      description: Wymagane także dla loginu/refresh/logout/OCR; dodatkowo serwer
+        sprawdza Origin == APP_ORIGIN.
+    Origin:
+      name: Origin
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uri
+      description: W przeglądarce ustawiany automatycznie. Dokładnie APP_ORIGIN; brak
+        lub inny origin odrzucany.
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: *id004
+      description: Stały UUID tej samej mutacji i identycznego payloadu; zachować
+        po utracie odpowiedzi. Reuse z inną treścią =409.
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: ^"[1-9][0-9]*"$
+      description: Silny ETag rewizji np. "3"; jej brak 428, konflikt 409.
+    GoalIfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: ^"(0|[1-9][0-9]*)"$
+      description: '"0" gdy brak dzisiejszego celu, inaczej today_revision z GET /goals.'
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    Offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    Search:
+      name: q
+      in: query
+      schema:
+        type: string
+        maxLength: 160
+        default: ""
+      description: Fragment nazwy bez rozróżnienia wielkości liter; % i _ to literały,
+        nie wildcards.
+    ArchiveFilter:
+      name: include_archived
+      in: query
+      schema:
+        type: boolean
+        default: false
+    WeightIfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: ^"(0|[1-9][0-9]*)"$
+      description: 0 tylko dla pierwszego PUT; po usunięciu użyj rewizji tombstone.
+        Max 2147483647. Brak 428, nieprawidłowa składnia 400, nieaktualna rewizja
+        409.
+  schemas:
+    WeightKg:
+      type: string
+      pattern: ^(?!0(?:\.0{1,2})?$)(?:0|[1-9][0-9]{0,2})(?:\.[0-9]{1,2})?$
+      description: 0.01..999.99 kg. String z kropką, bez wykładnika i cichego zaokrąglania.
+    WeightWrite:
+      type: object
+      additionalProperties: false
+      required:
+        - weight_kg
+      properties:
+        weight_kg:
+          $ref: "#/components/schemas/WeightKg"
+    StatisticsDay:
+      type: object
+      additionalProperties: false
+      required:
+        - date
+        - kcal
+        - meal_count
+        - weight_kg
+        - weight_revision
+      properties:
+        date:
+          type: string
+          format: date
+          pattern: ^\d{4}-\d{2}-\d{2}$
+        kcal:
+          oneOf:
+            - $ref: "#/components/schemas/TotalDecimal"
+            - type: "null"
+        meal_count:
+          type: integer
+          minimum: 0
+        weight_kg:
+          oneOf:
+            - $ref: "#/components/schemas/WeightKg"
+            - type: "null"
+        weight_revision:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+    Statistics:
+      type: object
+      additionalProperties: false
+      required:
+        - from
+        - to
+        - today
+        - timezone
+        - days
+      properties:
+        from:
+          type: string
+          format: date
+          pattern: ^\d{4}-\d{2}-\d{2}$
+        to:
+          type: string
+          format: date
+          pattern: ^\d{4}-\d{2}-\d{2}$
+        today:
+          type: string
+          format: date
+          pattern: ^\d{4}-\d{2}-\d{2}$
+        timezone:
+          type: string
+          const: Europe/Warsaw
+        days:
+          type: array
+          minItems: 1
+          maxItems: 366
+          items:
+            $ref: "#/components/schemas/StatisticsDay"
+    WeightMutation:
+      type: object
+      additionalProperties: false
+      required:
+        - date
+        - applied_revision
+        - current_revision
+        - replayed
+        - deleted
+      properties:
+        date:
+          type: string
+          format: date
+          pattern: ^\d{4}-\d{2}-\d{2}$
+        applied_revision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        current_revision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        replayed:
+          type: boolean
+        deleted:
+          type: boolean
+          description: Bieżący stan, także przy replay.
+    Decimal:
+      type: string
+      pattern: ^(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?$
+      description: Liczba dziesiętna 0..99999999.99 jako string, maks. 2 miejsca;
+        brak cichego zaokrąglenia.
+      examples:
+        - "350"
+        - "3.40"
+    PositiveDecimal:
+      allOf:
+        - $ref: "#/components/schemas/Decimal"
+        - not:
+            pattern: ^0(\.0{1,2})?$
+      description: Jak Decimal, ale ściśle większe od zera.
+    TotalDecimal:
+      type: string
+      pattern: ^(0|[1-9][0-9]*)(\.[0-9]{1,6})?$
+      description: Dokładny wynik bez limitu wejściowego; zaokrąglenie half-up dopiero
+        w UI.
+    SignedDecimal:
+      type: string
+      pattern: ^-?(0|[1-9][0-9]*)(\.[0-9]{1,6})?$
+    Nutrients:
+      type: object
+      additionalProperties: false
+      required:
+        - kcal
+        - protein
+        - fat
+        - carbs
+      properties:
+        kcal:
+          $ref: "#/components/schemas/TotalDecimal"
+        protein:
+          $ref: "#/components/schemas/TotalDecimal"
+        fat:
+          $ref: "#/components/schemas/TotalDecimal"
+        carbs:
+          $ref: "#/components/schemas/TotalDecimal"
+    Percentages:
+      type: object
+      additionalProperties: false
+      required:
+        - kcal
+        - protein
+        - fat
+        - carbs
+      properties:
+        kcal:
+          type: string
+          pattern: ^(0|[1-9][0-9]*)(\.[0-9]{1,2})?$
+        protein:
+          type: string
+          pattern: ^(0|[1-9][0-9]*)(\.[0-9]{1,2})?$
+        fat:
+          type: string
+          pattern: ^(0|[1-9][0-9]*)(\.[0-9]{1,2})?$
+        carbs:
+          type: string
+          pattern: ^(0|[1-9][0-9]*)(\.[0-9]{1,2})?$
+      description: Procent może przekroczyć 100; half-up do dwóch miejsc. Pasek UI
+        ograniczony do 100%.
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - request_id
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        request_id: *id004
+        field_errors:
+          type: object
+          additionalProperties:
+            type: string
+    Login:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 320
+        password:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          writeOnly: true
+    Session:
+      type: object
+      additionalProperties: false
+      required:
+        - owner_id
+        - email
+        - timezone
+        - expires_at
+      properties:
+        owner_id: *id004
+        email:
+          type: string
+          format: email
+        timezone:
+          type: string
+          const: Europe/Warsaw
+        expires_at: &id013
+          type: string
+          format: date-time
+      description: Bez access/refresh tokenów w JSON. Tokeny wyłącznie w HttpOnly
+        cookies.
+    MutationAck:
+      type: object
+      additionalProperties: false
+      required:
+        - resource_id
+        - applied_revision
+        - current_revision
+        - replayed
+        - deleted
+      properties:
+        resource_id: *id004
+        applied_revision: &id006
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        current_revision: *id006
+        replayed:
+          type: boolean
+        deleted:
+          type: boolean
+      description: Po commit. Replay nie wykonuje DML; applied_revision może być starsze
+        niż current_revision. UI wykonuje świeży GET. deleted dotyczy tombstone posiłku,
+        nie archiwizacji produktu.
+    ProductCreate:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - basis_unit
+        - kcal_per_100
+        - protein_per_100
+        - fat_per_100
+        - carbs_per_100
+      properties:
+        id: *id004
+        name: &id007
+          type: string
+          minLength: 1
+          maxLength: 160
+          description: Po trim; sam biały znak niedozwolony.
+        basis_unit: &id012
+          type: string
+          enum:
+            - g
+            - ml
+        kcal_per_100: &id008
+          $ref: "#/components/schemas/Decimal"
+        protein_per_100: &id009
+          $ref: "#/components/schemas/Decimal"
+        fat_per_100: &id010
+          $ref: "#/components/schemas/Decimal"
+        carbs_per_100: &id011
+          $ref: "#/components/schemas/Decimal"
+    ProductUpdate:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - kcal_per_100
+        - protein_per_100
+        - fat_per_100
+        - carbs_per_100
+      properties:
+        name: *id007
+        kcal_per_100: *id008
+        protein_per_100: *id009
+        fat_per_100: *id010
+        carbs_per_100: *id011
+      description: Jednostka nie może być zmieniona. If-Match wymagane.
+    Product:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - basis_unit
+        - kcal_per_100
+        - protein_per_100
+        - fat_per_100
+        - carbs_per_100
+        - revision
+        - archived_at
+        - created_at
+        - updated_at
+      properties:
+        id: *id004
+        name: *id007
+        basis_unit: *id012
+        kcal_per_100: *id008
+        protein_per_100: *id009
+        fat_per_100: *id010
+        carbs_per_100: *id011
+        revision: *id006
+        archived_at:
+          anyOf:
+            - *id013
+            - type: "null"
+        created_at: *id013
+        updated_at: *id013
+    ProductList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - limit
+        - offset
+        - has_more
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+        limit:
+          type: integer
+        offset:
+          type: integer
+        has_more:
+          type: boolean
+    TemplateIngredientInput:
+      type: object
+      additionalProperties: false
+      required:
+        - item_id
+        - product_id
+        - expected_product_revision
+        - quantity
+      properties:
+        item_id: *id004
+        product_id: *id004
+        expected_product_revision: *id006
+        quantity:
+          $ref: "#/components/schemas/PositiveDecimal"
+    TemplateItem:
+      type: object
+      additionalProperties: false
+      required:
+        - item_id
+        - product
+        - quantity
+        - position
+      properties:
+        item_id: *id004
+        product:
+          $ref: "#/components/schemas/Product"
+        quantity:
+          $ref: "#/components/schemas/PositiveDecimal"
+        position:
+          type: integer
+          minimum: 0
+    TemplateCreate:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - items
+      properties:
+        id: *id004
+        name: *id007
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TemplateIngredientInput"
+          minItems: 1
+      description: UUID składników unikalne, pozycje wynikają z kolejności tablicy.
+        Produkty aktywne. Powtórzenie tego samego produktu dozwolone z innym item_id.
+    TemplateUpdate:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - items
+      properties:
+        name: *id007
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TemplateIngredientInput"
+          minItems: 1
+    MealTemplate:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - revision
+        - archived_at
+        - items
+        - created_at
+        - updated_at
+      properties:
+        id: *id004
+        name: *id007
+        revision: *id006
+        archived_at:
+          anyOf:
+            - *id013
+            - type: "null"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TemplateItem"
+          minItems: 1
+        created_at: *id013
+        updated_at: *id013
+    TemplateList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - limit
+        - offset
+        - has_more
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MealTemplate"
+        limit:
+          type: integer
+        offset:
+          type: integer
+        has_more:
+          type: boolean
+    TemplateSource:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - revision
+      properties:
+        id: *id004
+        revision: *id006
+    NewDiaryItem:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - item_id
+        - product_id
+        - expected_product_revision
+        - quantity
+      properties:
+        kind:
+          type: string
+          const: new
+        item_id: *id004
+        product_id: *id004
+        expected_product_revision: *id006
+        quantity:
+          $ref: "#/components/schemas/PositiveDecimal"
+      description: Snapshot pobierany przez bazę, nigdy z klienta. item_id musi być
+        nowy w agregacie.
+    ExistingDiaryItem:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - item_id
+        - quantity
+      properties:
+        kind:
+          type: string
+          const: existing
+        item_id: *id004
+        quantity:
+          $ref: "#/components/schemas/PositiveDecimal"
+      description: Zmienia ilość/pozycję; zachowuje nazwę, jednostkę i wartości snapshotu
+        nawet po archiwizacji produktu.
+    MealCreate:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - entry_date
+        - category
+        - items
+      properties:
+        id: *id004
+        name: *id007
+        entry_date: *id005
+        category: &id014
+          type: string
+          enum:
+            - breakfast
+            - lunch
+            - dinner
+            - snack
+        source_template:
+          $ref: "#/components/schemas/TemplateSource"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/NewDiaryItem"
+          minItems: 1
+      description: Data <= dzisiaj w Europe/Warsaw. Jeśli source_template podane,
+        kontrola jego rewizji/aktywności i produktów źródła. Składniki są niezależną
+        kopią.
+    MealUpdate:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - entry_date
+        - category
+        - items
+      properties:
+        name: *id007
+        entry_date: *id005
+        category: *id014
+        items:
+          type: array
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/ExistingDiaryItem"
+              - $ref: "#/components/schemas/NewDiaryItem"
+          minItems: 1
+      description: Pełna lista; pominięcie usuwa składnik tylko z tego posiłku. Nowy
+        UUID oznacza świadome pobranie aktualnych wartości. Nie przyjmować snapshotu
+        od klienta.
+    DiaryItem:
+      type: object
+      additionalProperties: false
+      required:
+        - item_id
+        - product_id
+        - source_product_revision
+        - product_name
+        - basis_unit
+        - kcal_per_100
+        - protein_per_100
+        - fat_per_100
+        - carbs_per_100
+        - quantity
+        - position
+      properties:
+        item_id: *id004
+        product_id: *id004
+        source_product_revision: *id006
+        product_name: *id007
+        basis_unit: *id012
+        kcal_per_100: *id008
+        protein_per_100: *id009
+        fat_per_100: *id010
+        carbs_per_100: *id011
+        quantity:
+          $ref: "#/components/schemas/PositiveDecimal"
+        position:
+          type: integer
+          minimum: 0
+    DiaryMeal:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - entry_date
+        - category
+        - revision
+        - items
+        - totals
+        - created_at
+        - updated_at
+      properties:
+        id: *id004
+        name: *id007
+        entry_date: *id005
+        category: *id014
+        revision: *id006
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiaryItem"
+          minItems: 1
+        totals:
+          $ref: "#/components/schemas/Nutrients"
+        created_at: *id013
+        updated_at: *id013
+    GoalVersion:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - effective_from
+        - kcal_goal
+        - protein_goal
+        - fat_goal
+        - carbs_goal
+        - revision
+        - created_at
+        - updated_at
+      properties:
+        id: *id004
+        effective_from: *id005
+        kcal_goal: &id015
+          $ref: "#/components/schemas/PositiveDecimal"
+        protein_goal: &id016
+          $ref: "#/components/schemas/PositiveDecimal"
+        fat_goal: &id017
+          $ref: "#/components/schemas/PositiveDecimal"
+        carbs_goal: &id018
+          $ref: "#/components/schemas/PositiveDecimal"
+        revision: *id006
+        created_at: *id013
+        updated_at: *id013
+    GoalView:
+      type: object
+      additionalProperties: false
+      required:
+        - date
+        - current
+        - today_id
+        - today_revision
+      properties:
+        date: *id005
+        current:
+          anyOf:
+            - $ref: "#/components/schemas/GoalVersion"
+            - type: "null"
+        today_id:
+          anyOf:
+            - *id004
+            - type: "null"
+        today_revision:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+      description: current to cel obowiązujący dla date. today_revision=0 gdy brak
+        wersji dzisiejszej, niezależnie od wersji dziedziczonej. today_id wskazuje
+        dzisiejszy rekord lub null.
+    GoalsWrite:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - expected_date
+        - kcal_goal
+        - protein_goal
+        - fat_goal
+        - carbs_goal
+      properties:
+        id: *id004
+        expected_date: *id005
+        kcal_goal: *id015
+        protein_goal: *id016
+        fat_goal: *id017
+        carbs_goal: *id018
+      description: id nowy przed pierwszą próbą albo today_id przy edycji. expected_date
+        musi być dzisiejsza w Europe/Warsaw. If-Match 0 tworzy tylko gdy brak dzisiejszej
+        wersji; >0 porównuje dzisiejszą revision.
+    Day:
+      type: object
+      additionalProperties: false
+      required:
+        - date
+        - timezone
+        - meals
+        - totals
+        - goals
+        - remaining_kcal
+        - percentages
+      properties:
+        date: *id005
+        timezone:
+          type: string
+          const: Europe/Warsaw
+        meals:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiaryMeal"
+        totals:
+          $ref: "#/components/schemas/Nutrients"
+        goals:
+          anyOf:
+            - $ref: "#/components/schemas/GoalVersion"
+            - type: "null"
+        remaining_kcal:
+          anyOf:
+            - $ref: "#/components/schemas/SignedDecimal"
+            - type: "null"
+        percentages:
+          anyOf:
+            - $ref: "#/components/schemas/Percentages"
+            - type: "null"
+      description: Spójny odczyt SQL. Brak posiłków daje zera, brak celu daje null
+        w goals/remaining/percentages. Soft-deleted posiłki pominięte. Sumy z diary_item,
+        bez aktualnych produktów.
+    LabelProposal:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - basis_status
+        - basis_unit
+        - kcal_per_100
+        - protein_per_100
+        - fat_per_100
+        - carbs_per_100
+        - missing_fields
+        - warnings
+      properties:
+        name:
+          anyOf:
+            - *id007
+            - type: "null"
+        basis_status:
+          type: string
+          enum:
+            - per_100
+            - per_portion
+            - unknown
+        basis_unit:
+          anyOf:
+            - *id012
+            - type: "null"
+        kcal_per_100:
+          anyOf:
+            - *id008
+            - type: "null"
+        protein_per_100:
+          anyOf:
+            - *id009
+            - type: "null"
+        fat_per_100:
+          anyOf:
+            - *id010
+            - type: "null"
+        carbs_per_100:
+          anyOf:
+            - *id011
+            - type: "null"
+        missing_fields:
+          type: array
+          items:
+            type: string
+            enum:
+              - name
+              - basis_unit
+              - kcal_per_100
+              - protein_per_100
+              - fat_per_100
+              - carbs_per_100
+          uniqueItems: true
+        warnings:
+          type: array
+          items:
+            type: string
+      description: Brakujące dane null, nie zero. per_portion/unknown wymaga null
+        dla wartości na 100 i ręcznego uzupełnienia. Odczyt niczego nie zapisuje.
+        Wymagana korekta/zatwierdzenie nawet przy komplecie.
+      allOf:
+        - if:
+            properties:
+              basis_status:
+                enum:
+                  - per_portion
+                  - unknown
+          then:
+            properties:
+              kcal_per_100:
+                type: "null"
+              protein_per_100:
+                type: "null"
+              fat_per_100:
+                type: "null"
+              carbs_per_100:
+                type: "null"
+    PwaManifest:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - short_name
+        - start_url
+        - scope
+        - display
+        - lang
+        - theme_color
+        - background_color
+        - icons
+      properties:
+        id:
+          type: string
+          const: /
+        name:
+          type: string
+          const: Dziennik Jedzenia
+        short_name:
+          type: string
+          const: Dziennik
+        start_url:
+          type: string
+          const: /
+        scope:
+          type: string
+          const: /
+        display:
+          type: string
+          const: standalone
+        lang:
+          type: string
+          const: pl
+        theme_color:
+          type: string
+        background_color:
+          type: string
+        icons:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - src
+              - sizes
+              - type
+            properties:
+              src:
+                type: string
+              sizes:
+                type: string
+              type:
+                type: string
+              purpose:
+                type: string
+          minItems: 2
+      description: Publiczny plik statyczny, bez danych użytkownika; nie dowodzi instalacji
+        na fizycznym urządzeniu.
+  responses:
+    BadRequest:
+      description: Błędny JSON/multipart, UUID lub nagłówek. code=BAD_REQUEST.
+      headers:
+        Cache-Control: *id001
+        X-Request-ID: *id002
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Brak/wygasła sesja. code=SESSION_REQUIRED lub SESSION_EXPIRED.
+        Bez potwierdzenia zapisu.
+      headers:
+        Cache-Control: *id001
+        X-Request-ID: *id002
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Obcy właściciel, origin lub brak nagłówka CSRF. code=FORBIDDEN.
+      headers:
+        Cache-Control: *id001
+        X-Request-ID: *id002
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Rekord nie istnieje/nie należy do właściciela. code=NOT_FOUND.
+        Usunięty posiłek nie jest przywracany.
+      headers:
+        Cache-Control: *id001
+        X-Request-ID: *id002
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: REVISION_CONFLICT, PRODUCT_CHANGED, PRODUCT_ARCHIVED, TEMPLATE_CHANGED,
+        TEMPLATE_ARCHIVED, RESOURCE_DELETED, IDEMPOTENCY_MISMATCH, ID_EXISTS lub DAY_CHANGED.
+        Bez nadpisania; szkic pozostaje.
+      headers:
+        Cache-Control: *id001
+        X-Request-ID: *id002
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unprocessable:
+      description: "Naruszenie BR-02..06: błędne pola, ilość/precyzja, pusty agregat,
+        niepoprawna/przyszła data. code=VALIDATION_ERROR i field_errors."
+      headers:
+        Cache-Control: *id001
+        X-Request-ID: *id002
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PreconditionRequired:
+      description: Brak wymaganego If-Match. code=PRECONDITION_REQUIRED.
+      headers:
+        Cache-Control: *id001
+        X-Request-ID: *id002
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: Limit API lub Workers AI Free. code=RATE_LIMIT lub AI_LIMIT. Bez
+        płatnego fallbacku.
+      headers:
+        Cache-Control: *id001
+        X-Request-ID: *id002
+        Retry-After:
+          schema:
+            type: integer
+            minimum: 1
+          description: Sekundy do kolejnej próby; przy limicie AI do resetu UTC, jeśli
+            znany.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unavailable:
+      description: Zależność chwilowo niedostępna. code=SERVICE_UNAVAILABLE, AI_UNAVAILABLE
+        lub AI_INVALID_RESPONSE. Nie oznacza pewności, że wcześniejsza mutacja nie
+        została zapisana.
+      headers:
+        Cache-Control: *id001
+        X-Request-ID: *id002
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PayloadTooLarge:
+      description: Obraz >10 MiB lub body >ustalonego limitu. code=PAYLOAD_TOO_LARGE;
+        obraz nie trafia do AI.
+      headers:
+        Cache-Control: *id001
+        X-Request-ID: *id002
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UnsupportedMediaType:
+      description:
+        Nieobsługiwany lub niezgodny z sygnaturą format, np. HEIC. code=UNSUPPORTED_IMAGE;
+        wybierz JPEG/PNG/WebP.
+      headers:
+        Cache-Control: *id001
+        X-Request-ID: *id002
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    GatewayTimeout:
+      description: Upstream nie zdążył w deadline serwera. code=AI_TIMEOUT; UI niezależnie
+        kończy oczekiwanie <=30 s od wysłania.
+      headers:
+        Cache-Control: *id001
+        X-Request-ID: *id002
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: Nieoczekiwany błąd. code=INTERNAL_ERROR; brak stack trace/SQL/surowego
+        modelu.
+      headers:
+        Cache-Control: *id001
+        X-Request-ID: *id002
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

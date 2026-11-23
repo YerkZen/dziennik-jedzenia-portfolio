@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dziennik-jedzenia-test",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-25",
+  "workers_dev": false,
+  "send_metrics": false,
+  "vars": {
+    "APP_ORIGIN": "https://localhost:5173",
+    "DEV_ORIGIN_FORWARDING": "true",
+  },
+}
